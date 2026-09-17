@@ -14,7 +14,12 @@ pub(super) fn disable() {
     super::disable_quiet("OnDeathEvent", &OnDeathEvent);
 }
 
-const ON_DEATH_EVENT_SIG: &str = "e8 $ { ' } 49 ? ? 48 ? ? ? ? ? ? 83 78 ? ?";
+/// Dead since 2.0.4 (0 matches). On 2.0.6 the old pattern
+/// `e8 $ { ' } 49 ? ? 48 ? ? ? ? ? ? 83 78 ? ?` matched exactly once, but at a
+/// call site inside an allocator (TEB reads right after the call), so a "1 match"
+/// here would detour a random 2-arg function as a 1-arg death handler. Parked
+/// until the real handler is re-derived by behaviour.
+const ON_DEATH_EVENT_SIG: &str = "cc cc cc cc cc cc cc cc DISABLED_v206_old_pattern_matches_allocator";
 
 #[derive(Clone)]
 pub struct OnDeathHook {

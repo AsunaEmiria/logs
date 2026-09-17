@@ -110,18 +110,19 @@ const HOLDER_STATUS_LIST_BEGIN: usize = 0xAF8;
 const HOLDER_STATUS_LIST_END: usize = 0xB00;
 
 /// `__RTDynamicCast(inptr, VfDelta, SrcType, TargetType, isReference)`, entry
-/// confirmed by `SymbolAt 0x496026c` → `FUN_14496026c` (v2.0.4).
+/// confirmed by `SymbolAt 0x496026c` → `FUN_14496026c` (v2.0.4); v2.0.6 value
+/// from six agreeing call sites relocated out of the 2.0.5 DB.
 ///
 /// The cast is load-bearing, not a filter that could be skipped: the game calls
 /// the value virtual on the pointer the cast RETURNS, and under multiple
 /// inheritance that is an adjusted subobject pointer. Calling the slot on the
 /// raw `StatusBase*` would read a different vtable.
-const RT_DYNAMIC_CAST_RVA: usize = 0x4960a4c; // 2.0.4: 0x496026c
-/// Source type for that cast — `StatusBase::RTTI_Type_Descriptor` (v2.0.5).
-const STATUS_BASE_TD_RVA: usize = 0x6ebe620; // 2.0.4: 0x6ebe2d0
-/// Target type — `IStatusDamageLimitBuff::RTTI_Type_Descriptor` (v2.0.5),
-/// round-tripped through `SymbolAt.java`.
-const DAMAGE_LIMIT_BUFF_TD_RVA: usize = 0x6e61560; // 2.0.4: 0x6e613d0
+const RT_DYNAMIC_CAST_RVA: usize = 0x49614dc; // 2.0.5: 0x4960a4c
+/// Source type for that cast — `StatusBase::RTTI_Type_Descriptor` (v2.0.6).
+const STATUS_BASE_TD_RVA: usize = 0x6ebf620; // 2.0.5: 0x6ebe620
+/// Target type — `IStatusDamageLimitBuff::RTTI_Type_Descriptor` (v2.0.6),
+/// from the `.?AV` name walk (the TD sits 0x10 before the name string).
+const DAMAGE_LIMIT_BUFF_TD_RVA: usize = 0x6e62560; // 2.0.5: 0x6e61560
 /// Virtual slot on the cast-to interface returning the buff's cap contribution.
 const DAMAGE_LIMIT_BUFF_VALUE_SLOT: usize = 8;
 /// u32 `status.tbl` StatusId, the same offset `status.rs` reads.

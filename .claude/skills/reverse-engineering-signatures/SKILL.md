@@ -15,6 +15,14 @@ Two tools, two jobs:
 
 Core rule: **a signature is only trustworthy when `sigscan` reports exactly 1 match. A hook target is only safe when Ghidra confirms it's a function ENTRY with the right argument count.**
 
+## Patch-day order (what 2.0.5 and 2.0.6 actually needed)
+
+1. Version string: UTF-16 `2.0.x` in the exe. Launch the lean import + fast analysis of the new exe immediately (background, ~3h); everything below runs against the OLD DB meanwhile.
+2. `node docs/superpowers/patch-tools/sweep.mjs` — signature status. A previously-dead pattern that suddenly matches once is a coincidence until proven otherwise (2.0.6: the death sig landed in an allocator).
+3. `RelocSites.java` on the old fast DB + `relocate.mjs` — every `*_RVA` const (`grep -rn "RVA: usize"`).
+4. `rtti.mjs` — summon vtables + the cap oracle's TypeDescriptors.
+5. Bump `src-hook/Cargo.toml`, `cargo test -p hook`, build with `--features eject`, copy to `src-tauri/hook.dll`, live-verify via the hook log.
+
 ## When to use
 
 - Hook log (`%APPDATA%\gbfr-logs\gbfr-logs.txt`) shows `Could not find match for pattern` or `[hook FAIL] <name>`.
@@ -67,6 +75,8 @@ A global is reached by some instruction's RIP-relative displacement, so recover 
 2. `DumpBytes.java` on the old DB → the bytes at that site.
 3. Wildcard the disp32, scan the **new** exe, and compute `target = cursor_rva + 4 + disp` (plus any bytes trailing the disp32, e.g. 4 more for a trailing imm32 as in `cmp dword [rip+x], imm32`).
 
+**Fast path (2.0.6, ~10 min for 13 globals):** `RelocSites.java NAME:0xOLD ...` on the old analyzed DB does steps 1–2 in one JVM run and emits a sigscan pattern per referencing function with *every* rel32/RIP disp32 in the window wildcarded (the component-type sites only become unique once the neighbouring displacements are wildcarded too) and the cursor on the target disp; `docs/superpowers/patch-tools/relocate.mjs <that output>` scans the new exe and tallies the votes per global. Args use `NAME:RVA`, never `NAME=RVA` — `analyzeHeadless.bat` splits on `=`. Sites in generic helpers come back with hundreds of matches; ignore them, the distinctive sites give 3–6 agreeing votes.
+
 **Take the disp32's address from sigscan's reported `cursor_rva` — never by counting bytes in a hex dump by eye.** Miscounting is silent: the value still lands in the same BSS region, still looks like a plausible global, and simply reads nothing at runtime. A 2.0.3 pass mis-sited three displacements by 8 this way, shipped, and cost a full live-test round.
 
 **The strongest check: byte-diff the whole enclosing function, old vs new.** These functions are typically identical apart from their displacement bytes, so the diff pins every displacement position exactly — and running the same arithmetic on the *old* function must reproduce the *old, known-good* value. That reproduction is the proof.
@@ -88,6 +98,8 @@ COL layout: `sig(0)=1, offset(4), cdOffset(8), pTypeDescriptor(0xC), pClassDescr
 **These classes carry ~20 COLs each** (one per base subobject of a deep multiple-inheritance hierarchy), so `sig==1` alone is not discriminating. The vtable that lands at `*(object)` — the one the hook compares — is the **subobject at offset 0**: filter `sig==1 && offset==0 && cdOffset==0 && pSelf==colRva`.
 
 Always **round-trip**: feed each recovered vtable RVA back through the walk and confirm it yields the class you started from. That turns 18 guesses into 18 verified facts.
+
+`docs/superpowers/patch-tools/rtti.mjs "<name regex>"` does the whole walk over the on-disk exe in Node (no Ghidra): it enumerates every COL, resolves each offset-0 COL's vtable, and prints `name td col vtable` per class. Anchor the regex (`^\.\?AVSo0000@@$`) or the `AttributeBase@VSo0000...` template noise drowns the hits. It also yields the TypeDescriptor RVAs the cap oracle needs.
 
 ### Shifted struct field (wrong value, no crash)
 
@@ -285,6 +297,8 @@ The injected DLL is **locked while the game runs** — close the game to swap it
 - `ghidra/FindByBytes.java` — byte pattern → containing-function entry for each hit (lean DB).
 - `ghidra/FindStringRefs.java` — ASCII substring → enclosing C-strings → code xrefs + containing-function entries (needs the **analyzed** DB for xrefs).
 - `ghidra/XrefsTo.java` — RVA(s) → every referencing site, deduped by containing function with per-function counts. THE query for "who touches this global/vtable/function" (needs the **analyzed** DB).
+- `ghidra/RelocSites.java` — `NAME:0xRVA` … → per referencing function, a ready-to-scan sigscan pattern (all displacements wildcarded, cursor on the target disp32, `k=` trailing-immediate count). Feed to `docs/superpowers/patch-tools/relocate.mjs`. `max:N` widens the per-global site cap (default 6).
+- `docs/superpowers/patch-tools/` (gitignored, keep) — `sweep.mjs` (extract every pattern literal incl. inline ones, run sigscan, `--json`), `rtti.mjs` (RTTI walk), `relocate.mjs` (scan RelocSites output, tally new RVAs).
 - `ghidra/ListSymbols.java` — case-insensitive substring search over the symbol table (RTTI class/vtable names) (needs the **analyzed** DB).
 - `ghidra/FindVCallSlot.java` — slot displacement (e.g. `0x48`) → every indirect `CALL qword ptr [reg + disp]` site with its containing function, plus the surrounding instructions. THE query for "who calls virtual slot N", which `XrefsTo` cannot answer: a virtual call references only the vtable, never the callee. Scans the listing, so data bytes that happen to match are never reported. Expect many hits — filter by the caller's code region and by how the out-param is used.
 - `ghidra/DisasmCalls.java` — target function RVA → every call site with the ~8 instructions preceding it (optionally filtered to given containing functions). Raw disassembly per site; use `CallSiteArgs.java` instead when you want the arguments already parsed.
@@ -299,6 +313,6 @@ The injected DLL is **locked while the game runs** — close the game to swap it
 
 **Ghidra DBs** (all under `C:\Users\Scott\ghidra-projects\gbfr`, all persist). Two kinds per game version: `gbfr<ver>lean` (import-only, for fast FindEntry/InspectFunc/FindByBytes lookups) and `gbfr<ver>fast` (fully analyzed, for `Decompile.java` + xrefs + `SymbolAt`/C++ RTTI names). Re-create both only after a new game patch.
 
-Present: `gbfr202*` (v2.0.2), `gbfr203*` (v2.0.3), `gbfr204*` (v2.0.4) and **`gbfr205lean` / `gbfr205fast`** (v2.0.5, current). The exe lives at `G:\SteamLibrary\steamapps\common\Granblue Fantasy Relink\` (sigscan's default), not under `C:\Program Files (x86)\Steam`. **Keep the previous version's DBs** — the 2.0.3 fix was derived almost entirely by querying `gbfr202fast` for xrefs and old bytes, which is impossible once Steam has overwritten the old exe.
+Present: `gbfr202*` (v2.0.2), `gbfr203*` (v2.0.3), `gbfr204*` (v2.0.4), `gbfr205*` (v2.0.5) and **`gbfr206lean` / `gbfr206fast`** (v2.0.6, current). Queries against an older DB in the same project run fine while a new `-import` analysis is in progress (just slower). The exe lives at `G:\SteamLibrary\steamapps\common\Granblue Fantasy Relink\` (sigscan's default), not under `C:\Program Files (x86)\Steam`. **Keep the previous version's DBs** — the 2.0.3 fix was derived almost entirely by querying `gbfr202fast` for xrefs and old bytes, which is impossible once Steam has overwritten the old exe.
 
 Detailed, evolving findings for the current patch live in the memory file `gbfr-endless-ragnarok-break` (verified entries, offsets, and per-hook status).

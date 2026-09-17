@@ -10,7 +10,7 @@
 //! Run (game running, as admin): cargo run -p gbfr-logs --example cap_ladder_dump
 //!
 //! Layout, from the `gbfr204fast` decompile of the builder's lookup:
-//!   root       = *(base + 0x7c22bc0)         (the save root)
+//!   root       = *(base + SAVE_ROOT_RVA)     (the save root)
 //!   normal map = buckets root+0x2E8, mask root+0x300, end-sentinel root+0x2D8
 //!   arts map   = buckets root+0x328, mask root+0x340, end-sentinel root+0x318
 //!   node       = { next @ +8, key(u32) @ +0x10, rows_begin @ +0x18, rows_end @ +0x20 }
@@ -21,7 +21,7 @@ use anyhow::{bail, Context, Result};
 use game_reader::MemRead;
 use gbfr_logs::game_mem;
 
-const SAVE_ROOT_RVA: u64 = 0x7c22e40;
+const SAVE_ROOT_RVA: u64 = 0x7c23e80; // 2.0.5: 0x7c22e40
 
 /// (buckets, mask, end-sentinel) offsets on the save root, per map.
 const MAPS: [(&str, u64, u64, u64); 2] = [
