@@ -49,11 +49,7 @@ pub const EMPTY_ID: u32 = game_reader::EMPTY_KEY;
 /// moved from two to three. The first two accuse builds nobody was accusing
 /// before and the third WITHDRAWS a report from every two-perfect player in the
 /// database, so all three need the sweep to revisit already-judged logs.
-/// 9: the perfect-summon report is no longer reported at all (see
-/// [`is_reported`]). Purely a WITHDRAWAL — every other rule says exactly what it
-/// said at 8 — and the sweep is the only thing that can take the stored ones
-/// back out of the database.
-pub const RULES_VERSION: u32 = 9;
+pub const RULES_VERSION: u32 = 8;
 
 /// Encounters recorded before this are never audited: epoch millis for
 /// 2026-07-09T00:00:00Z, inclusive (a log stamped exactly this is judged).
@@ -452,18 +448,6 @@ fn evidence_for(build: &LegalityInputs, finding: &Finding) -> Option<Evidence> {
     }
 }
 
-/// Rules that are computed but never reported.
-///
-/// [`Rule::SummonPerfectCount`] is not a breach — a full set of top-of-window
-/// rolls is legal, merely remarkable — and it is no longer shown (user,
-/// 2026-08-07). Withheld HERE, at the one exit every caller goes through, so
-/// nothing is stored, broadcast or displayed; the rule itself and its tests stay
-/// where they are, because the RE'd perfection tables behind it are the
-/// expensive part and reinstating the report is deleting this line.
-fn is_reported(rule: Rule) -> bool {
-    rule != Rule::SummonPerfectCount
-}
-
 /// Every legality finding for one build, in rule order, each carrying the
 /// equipment it is about.
 ///
@@ -478,8 +462,6 @@ pub fn audit(build: &LegalityInputs) -> Vec<Finding> {
     ));
     findings.extend(summons::audit_summons(&build.summons));
     findings.extend(master_traits::audit_master_traits(&build.skillboard));
-
-    findings.retain(|finding| is_reported(finding.rule));
 
     for finding in &mut findings {
         finding.evidence = evidence_for(build, finding);
@@ -865,16 +847,10 @@ mod tests {
         // watched summon, which can only fire if the other three's
         // top-of-window state was also read and recognised — the summon twin
         // of the Stun case above.
-        //
-        // Asked of the rule module rather than through `fires`: the report is
-        // computed but withheld (see `is_reported`), so `audit` is by design
-        // the one place it cannot be observed.
         let mut build = legal_build();
         build.summons[1].bonus_level = 9;
         assert!(
-            summons::audit_summons(&build.summons)
-                .iter()
-                .any(|finding| finding.rule == Rule::SummonPerfectCount),
+            fires(&build, Rule::SummonPerfectCount),
             "the perfect-count report never read the fixture's summons"
         );
 
@@ -1139,7 +1115,7 @@ mod tests {
         assert_eq!(
             (RULES_VERSION, snapshot.join("\n").as_str()),
             (
-                9,
+                8,
                 "WrightstoneTrait Wrightstone TraitId(1280871463) -> None odds=None\n\
                  SigilTraitLevel Sigil(0) Level(30) -> Level(15) odds=None\n\
                  OvermasteryValue Overmastery(3) Amount(0.7) -> Amount(2.0) odds=None\n\
@@ -1148,7 +1124,8 @@ mod tests {
                  odds=None\n\
                  SummonBonusMagnitude Summon(1) Amount(75.0) -> Amount(50.0) odds=None\n\
                  OvermasteryAllMaxed Overmasteries Count(3) -> None \
-                 odds=Some(2.2586109542631282e-9)"
+                 odds=Some(2.2586109542631282e-9)\n\
+                 SummonPerfectCount Summons Count(4) -> None odds=None"
             ),
             "the rules changed what they say — update this snapshot AND bump \
              RULES_VERSION, or every stored log keeps the old verdicts forever"
